@@ -7,7 +7,6 @@ const recentRequests = new Map<string, number[]>();
 
 const schema = {
   type: "object",
-  additionalProperties: false,
   properties: {
     position: { type: "string", enum: scoutPositions },
     minSkill: { type: "integer", minimum: 1, maximum: 5 },
@@ -28,9 +27,9 @@ function validDefaults(value: unknown): value is ScoutDefaults {
 }
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return NextResponse.json({ error: "AI scouting is not configured yet. Add OPENAI_API_KEY to the server environment." }, { status: 503 });
+    return NextResponse.json({ error: "AI scouting is not configured yet. Add GEMINI_API_KEY to the server environment." }, { status: 503 });
   }
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/+$/, "").replace(/\/rest\/v1$/i, "");
@@ -71,48 +70,86 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({
-        model: process.env.OPENAI_SCOUT_MODEL || "gpt-4.1-mini",
-        max_output_tokens: 250,
-        input: [
-          {
-            role: "developer",
-            content: "You convert a captain's short football replacement request into search filters. Do not rank or evaluate players, invent player data, or change the scoring rules. Use the supplied current filter as the default for anything the captain did not specify. Map a winger or striker to Forward, a centre back or fullback to Defender, and a goalkeeper to Goalkeeper. A distance phrase such as within 5 km becomes a maximum distance. Only put an exact player name in nameQuery when the user explicitly asks for that person; otherwise return an empty string. Return only the requested structured data.",
-          },
-          { role: "user", content: JSON.stringify({ request: input.request.trim(), currentFilters: input.defaults }) },
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "playhire_scout_filters",
-            strict: true,
-            schema,
-          },
-        },
-      }),
+    const preferredModel = process.env.GEMINI_MODEL || process.env.GEMINI_SCOUT_MODEL || "gemini-3.8-flash";
+    const models = [...new Set([preferredModel, "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"] )];
+    const payload = JSON.stringify({
+      model: preferredModel,
+      system_instruction: "You convert a captain's short football replacement request into search filters. Do not rank or evaluate players, invent player data, or change the scoring rules. Use the supplied current filter as the default for anything the captain did not specify. Map a winger or striker to Forward, a centre back or fullback to Defender, and a goalkeeper to Goalkeeper. A distance phrase such as within 5 km becomes a maximum distance. Only put an exact player name in nameQuery when the user explicitly asks for that person; otherwise return an empty string. Use null for maxDistanceKm when no distance limit is requested. Return only the requested structured data.",
+      input: JSON.stringify({ request: input.request.trim(), currentFilters: input.defaults }),
+      response_format: {
+        type: "text",
+        mime_type: "application/json",
+        schema,
+      },
+      generation_config: { max_output_tokens: 250 },
     });
+    let activeModel = preferredModel;
+    let response: Response | undefined;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25_000);
+    try {
+      for (const model of models) {
+        activeModel = model;
+        response = await requestGemini(model, apiKey, payload, controller.signal);
+        if (response.status !== 503 && response.status !== 404) break;
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    if (!response) return NextResponse.json({ error: "Gemini could not process the request. Please try again." }, { status: 502 });
 
     if (!response.ok) {
-      return NextResponse.json({ error: "AI scouting could not interpret that request. Try a shorter description." }, { status: 502 });
+      const providerError = await response.json().catch(() => null) as {
+        error?: { message?: string; status?: string };
+      } | null;
+      const detail = providerError?.error?.message;
+      console.error("Gemini scouting request failed", response.status, providerError?.error?.status || "unknown status", detail || "No error details returned");
+      return NextResponse.json({
+        error: detail
+          ? `Gemini API error (${response.status}, model ${activeModel}): ${detail}`
+          : "Gemini could not process the request. Check the development server terminal for details.",
+      }, { status: 502 });
     }
 
     const result = await response.json() as {
       output_text?: string;
-      output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
+      steps?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
     };
-    const outputText = result.output_text || result.output
-      ?.filter(item => item.type === "message")
-      .flatMap(item => item.content || [])
-      .find(item => item.type === "output_text")?.text;
+    const outputText = result.output_text || result.steps
+      ?.filter(step => step.type === "model_output")
+      .flatMap(step => step.content || [])
+      .filter(part => part.type === "text")
+      .map(part => part.text || "")
+      .join("");
     if (!outputText) return NextResponse.json({ error: "AI returned no search filters. Try describing the position, skill, or budget." }, { status: 502 });
     const criteria: unknown = JSON.parse(outputText);
     if (!isScoutCriteria(criteria)) return NextResponse.json({ error: "AI returned invalid search filters. Please try again." }, { status: 502 });
     return NextResponse.json({ criteria });
-  } catch {
-    return NextResponse.json({ error: "AI scouting is temporarily unavailable. Please try again." }, { status: 502 });
+  } catch (error) {
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      return NextResponse.json({ error: "Gemini took too long to respond. Please try again." }, { status: 504 });
+    }
+    const cause = error && typeof error === "object" && "cause" in error
+      ? (error as { cause?: { code?: unknown } }).cause
+      : undefined;
+    const causeCode = typeof cause?.code === "string" ? cause.code : undefined;
+    console.error("AI scouting request exception", error instanceof Error ? error.name : "UnknownError", error instanceof Error ? error.message : "Unknown failure", causeCode || "");
+    const message = error instanceof SyntaxError
+      ? "Gemini returned an unreadable response. Please retry."
+      : error instanceof TypeError
+        ? `Could not reach Gemini (${causeCode || "network error"}). Check your connection and retry.`
+        : "AI scouting is temporarily unavailable. Please try again.";
+    return NextResponse.json({ error: message }, { status: 502 });
   }
+}
+
+function requestGemini(model: string, apiKey: string, payload: string, signal: AbortSignal) {
+  const requestBody = JSON.parse(payload) as Record<string, unknown>;
+  return fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    method: "POST",
+    headers: { "x-goog-api-key": apiKey, "content-type": "application/json" },
+    cache: "no-store",
+    signal,
+    body: JSON.stringify({ ...requestBody, model }),
+  });
 }

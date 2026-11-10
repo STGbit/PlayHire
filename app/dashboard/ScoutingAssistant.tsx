@@ -41,6 +41,7 @@ export default function ScoutingAssistant({ defaults, onApply }: Props) {
           authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ request: request.trim(), defaults }),
+        signal: AbortSignal.timeout(30_000),
       });
       const result = await response.json() as { criteria?: unknown; error?: string };
       if (!response.ok || !isScoutCriteria(result.criteria)) {
@@ -52,8 +53,10 @@ export default function ScoutingAssistant({ defaults, onApply }: Props) {
       setCriteria(result.criteria);
       onApply(result.criteria);
       setMessage("");
-    } catch {
-      setMessage("AI scouting is temporarily unavailable. Please try again.");
+    } catch (error) {
+      setMessage(error instanceof Error && error.name === "TimeoutError"
+        ? "The AI request timed out. Please try again."
+        : "AI scouting is temporarily unavailable. Please try again.");
     }
     setBusy(false);
   }

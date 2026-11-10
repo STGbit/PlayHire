@@ -6,9 +6,9 @@ Captains can create teams, manage roster entries, and schedule fixtures. Players
 
 ## AI role and current limits
 
-- `app/api/scout/route.ts` sends only the captain's short request and current filter values to the OpenAI Responses API. Player records are not sent to the model.
+- `app/api/scout/route.ts` sends only the captain's short request and current filter values to the Gemini API. Player records are not sent to the model.
 - The model returns structured filters for position, minimum skill, budget, distance, and an explicitly requested player name. The app validates those filters and applies them locally through `lib/readiness.ts`.
-- The rule based readiness score and its component reasons remain deterministic. The AI feature is unavailable until a server side `OPENAI_API_KEY` is configured.
+- The rule based readiness score and its component reasons remain deterministic. The AI feature is unavailable until a server side `GEMINI_API_KEY` is configured.
 - The recommendation pool in the dashboard is illustrative sample data. Real player availability, eligibility, travel distance, reliability, and fee data are not yet loaded into scouting. Do not present sample scores as real evaluations.
 - Performance testing, cohort normalization, progress histories, and Talent Passports are future work, not current features.
 
@@ -18,12 +18,12 @@ Captains can create teams, manage roster entries, and schedule fixtures. Players
 2. Run `npm install`.
 3. Copy `.env.example` to `.env.local`.
 4. Create a Supabase project and set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in `.env.local`. Never expose a service role key in browser code.
-5. Add an OpenAI API key to the server only as `OPENAI_API_KEY`. Optionally set `OPENAI_SCOUT_MODEL`; the default is `gpt-4.1-mini`. Restart the dev server after changing environment values.
+5. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/apikey) and add it to `.env.local` as `GEMINI_API_KEY`. The free tier has usage limits and terms; see [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing). The app defaults to `gemini-3.8-flash`, with fallback to `gemini-3.7-flash` and `gemini-3.6-flash` if a model is unavailable or temporarily overloaded. Set `GEMINI_MODEL` to override the primary model. Restart the dev server after changing environment values.
 6. In Supabase SQL Editor, run migrations in order: `0001_initial.sql`, `0002_team_join_codes.sql`, `0003_team_roster.sql`, `0004_fix_join_team_ambiguity.sql`, `0005_leave_team.sql`, `0006_join_team_unambiguous_result.sql`, and `0007_joined_players_roster.sql`.
 7. In Supabase Auth settings, enable email/password sign in and set the local site URL to `http://localhost:3000`.
 8. Run `npm run dev` and open `http://localhost:3000`.
 
-If `OPENAI_API_KEY` is missing, the rest of the app can still run; the scouting assistant displays a setup message instead of calling the model.
+If `GEMINI_API_KEY` is missing, the rest of the app can still run; the scouting assistant displays a setup message instead of calling the model.
 
 ## Readiness ranking
 
@@ -33,7 +33,7 @@ The AI can only extract user intent into these filters. It cannot alter the form
 
 ## Deployment and submission checklist
 
-- Deploy the Next.js app to a host such as Vercel and configure the same environment variables there. Keep `OPENAI_API_KEY` in server side deployment settings only.
+- Deploy the Next.js app to a host such as Render and configure the same environment variables there. Keep `GEMINI_API_KEY` in server side deployment settings only.
 - Configure the Supabase production site URL and allowed redirect URLs for the deployed domain.
 - Test sign up, sign in, team creation, team join, roster add/remove, match creation, and AI scouting with non sample data before sharing the live URL.
 - The repository does not include a deployed URL. A participant must deploy the project and submit the live link as required by the event.
