@@ -382,6 +382,11 @@ html{scroll-behavior:smooth}
 .auth-forgot-row{text-align:right;margin-top:-3px}
 .auth-forgot-row button{border:0;background:none;padding:2px 0;color:#1C2D4A;font-size:10px;font-weight:600}
 .auth-forgot-row button:hover{text-decoration:underline}
+.auth-card .password-field{position:relative;display:block}
+.auth-card .password-field input{width:100%;padding-right:38px}
+.auth-card .password-toggle{position:absolute;top:50%;right:9px;display:grid;place-items:center;width:25px;height:25px;padding:0;transform:translateY(-50%);border:0;border-radius:5px;background:transparent;color:#718078;cursor:pointer}
+.auth-card .password-toggle:hover{background:#f0f3f0;color:#1C2D4A}
+.auth-card .password-toggle:focus-visible{outline:2px solid #1C2D4A;outline-offset:2px}
 
 /* Teams workspace dark mode. */
 .team-page{background:#1A120E;color:#F9F6F0;font-family:'Source Sans 3',Arial,sans-serif}
